@@ -26,6 +26,7 @@ using uint64 = __uint64; // needs to match z3's definition
 
 enum class Opcode {
     SUB,
+    MUL,
     AND,
     CMPEQ,
     LAST = CMPEQ
@@ -48,6 +49,7 @@ struct Insn {
 	std::string s;
 	switch (opcode) {
 	case Opcode::SUB: s = "sub"; break;
+	case Opcode::MUL: s = "mul"; break;
 	case Opcode::AND: s = "and"; break;
 	case Opcode::CMPEQ: s = "cmpeq"; break;
 	default: abort();
@@ -102,6 +104,7 @@ z3::expr eval(const z3::expr& x, const std::vector<SymbolicInsn>& insns, z3::con
 	    in2 = z3::ite(insns[i].r2 == j, regs[j], in2);
 
 	z3::expr result = in1 - in2; // SUB is the default
+	result = z3::ite(insns[i].opcode == int(Opcode::MUL), in1 * in2, result);
 	result = z3::ite(insns[i].opcode == int(Opcode::AND), in1 & in2, result);
 	result = z3::ite(insns[i].opcode == int(Opcode::CMPEQ), boolToBv(in1 == in2, c), result);
 	regs.push_back(result);
@@ -153,6 +156,8 @@ std::vector<Insn> reconstructProgram(const std::vector<SymbolicInsn>& insns, con
     return result;
 }
 
+// === test cases
+
 z3::expr isPowerOfTwoOrZero(const z3::expr& x, z3::context& c) {
     auto r = x == 0;
     uint64 p = 1;
@@ -163,8 +168,30 @@ z3::expr isPowerOfTwoOrZero(const z3::expr& x, z3::context& c) {
     return boolToBv(r, c);
 }
 
+z3::expr isPowerOfTwo(const z3::expr& x, z3::context& c) {
+    z3::expr r = c.bool_val(false);
+    uint64 p = 1;
+    for (int i = 0; i < REGISTER_WIDTH; ++i) {
+	r = r || (x == bvConst(p, c));
+	p <<= 1;
+    }
+    return boolToBv(r, c);
+}
+
+z3::expr isSmallPowerOfThree(const z3::expr& x, z3::context& c) {
+    z3::expr r = c.bool_val(false);
+    for (uint64 p = 1; p <= 2189; p *= 3)
+	r = r || (x == bvConst(p, c));
+    return boolToBv(r, c);
+}
+
+
+
 int main() {
-    const auto targetProgram = isPowerOfTwoOrZero;
+    const auto targetProgram = isSmallPowerOfThree;
+    const auto inputRestriction = [](const z3::expr& x) { return z3::ule(x, 2189); };
+    //const auto targetProgram = isSmallPowerOfThree;
+    //const auto inputRestriction = [](const z3::expr& x) { return z3::ule(x, 2189); };
 
     try {
 	std::vector<uint64> testCases;
@@ -201,7 +228,7 @@ int main() {
 
 		std::cerr << "\nFinding counterexample...\n";
 		auto cesolver = z3::solver(c);
-		cesolver.add(solutionProgram != targetProgram(x, c));
+		cesolver.add(inputRestriction(x) && solutionProgram != targetProgram(x, c));
 		const auto ceResult = cesolver.check();
 		if (ceResult != z3::sat) {
 		    if (ceResult != z3::unsat)
@@ -222,6 +249,7 @@ int main() {
 	}
     } catch (const z3::exception& e) {
 	std::cerr << e.msg() << std::endl;
+	return 1;
     }
 
     return 0;

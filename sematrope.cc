@@ -14,6 +14,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>. */
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -24,12 +25,26 @@
 constexpr int REGISTER_WIDTH = 32;
 using uint64 = __uint64; // needs to match z3's definition
 
-enum class Opcode {
-    SUB,
-    MUL,
-    AND,
-    CMPEQ,
-    LAST = CMPEQ
+struct Op {
+    std::string name;
+    std::function<z3::expr(const z3::expr&, const z3::expr&)> eval;
+};
+
+using Opcode = int;
+
+z3::expr bvConst(uint64 x, z3::context& c) {
+    return c.bv_val(x, REGISTER_WIDTH);
+}
+
+z3::expr boolToBv(const z3::expr& b) {
+    return z3::ite(b, bvConst(1, b.ctx()), bvConst(0, b.ctx()));
+}
+
+std::vector<Op> ops = {
+    {"sub",   [](const z3::expr& a, const z3::expr& b){ return a - b; }},
+    {"mul",   [](const z3::expr& a, const z3::expr& b){ return a * b; }},
+    {"and",   [](const z3::expr& a, const z3::expr& b){ return a & b; }},
+    {"cmpeq", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a == b); }},
 };
 
 template<typename T>
@@ -46,14 +61,7 @@ struct Insn {
     uint64 imm;
 
     std::string toString(int dest) const {
-	std::string s;
-	switch (opcode) {
-	case Opcode::SUB: s = "sub"; break;
-	case Opcode::MUL: s = "mul"; break;
-	case Opcode::AND: s = "and"; break;
-	case Opcode::CMPEQ: s = "cmpeq"; break;
-	default: abort();
-	}
+	std::string s = ops[opcode].name;
 	s += " r" + std::to_string(r1) + ", ";
 	if (isImm)
 	    s += "0x" + hex(imm);
@@ -82,17 +90,9 @@ struct SymbolicInsn {
     // here.
 };
 
-z3::expr bvConst(uint64 x, z3::context& c) {
-    return c.bv_val(x, REGISTER_WIDTH);
-}
-
-z3::expr boolToBv(const z3::expr& b, z3::context& c) {
-    return z3::ite(b, bvConst(1, c), bvConst(0, c));
-}
-
 // Returns an expression representing the result of running the
 // program in insns on the input value x.
-z3::expr eval(const z3::expr& x, const std::vector<SymbolicInsn>& insns, z3::context& c) {
+z3::expr eval(const z3::expr& x, const std::vector<SymbolicInsn>& insns) {
     std::vector<z3::expr> regs;
     regs.push_back(x);
     for (std::size_t i = 0; i < insns.size(); ++i) {
@@ -103,10 +103,9 @@ z3::expr eval(const z3::expr& x, const std::vector<SymbolicInsn>& insns, z3::con
 	for (int j = int(i); j >= 0; --j)
 	    in2 = z3::ite(insns[i].r2 == j, regs[j], in2);
 
-	z3::expr result = in1 - in2; // SUB is the default
-	result = z3::ite(insns[i].opcode == int(Opcode::MUL), in1 * in2, result);
-	result = z3::ite(insns[i].opcode == int(Opcode::AND), in1 & in2, result);
-	result = z3::ite(insns[i].opcode == int(Opcode::CMPEQ), boolToBv(in1 == in2, c), result);
+	z3::expr result = ops[0].eval(in1, in2);
+	for (int opcode = 1; opcode < static_cast<int>(ops.size()); ++opcode)
+	    result = z3::ite(insns[i].opcode == opcode, ops[opcode].eval(in1, in2), result);
 	regs.push_back(result);
     }
     return regs[insns.size()];
@@ -138,7 +137,7 @@ std::vector<Insn> reconstructProgram(const std::vector<SymbolicInsn>& insns, con
     for (int i = 0; i < static_cast<int>(insns.size()); ++i) {
 	Insn insn;
 	int opcode = getIntDefault(model.eval(insns[i].opcode), 0);
-	insn.opcode = (opcode < 0 || opcode > int(Opcode::LAST)) ? Opcode(0) : Opcode(opcode);
+	insn.opcode = (opcode < 0 || opcode >= static_cast<int>(ops.size())) ? 0 : opcode;
 	int r1 = getIntDefault(model.eval(insns[i].r1), 0);
 	insn.r1 = (r1 < 0 || r1 > i) ? i : r1;
 	int r2 = getIntDefault(model.eval(insns[i].r2), 0);
@@ -165,7 +164,7 @@ z3::expr isPowerOfTwoOrZero(const z3::expr& x, z3::context& c) {
 	r = r || (x == bvConst(p, c));
 	p <<= 1;
     }
-    return boolToBv(r, c);
+    return boolToBv(r);
 }
 
 z3::expr isPowerOfTwo(const z3::expr& x, z3::context& c) {
@@ -175,21 +174,19 @@ z3::expr isPowerOfTwo(const z3::expr& x, z3::context& c) {
 	r = r || (x == bvConst(p, c));
 	p <<= 1;
     }
-    return boolToBv(r, c);
+    return boolToBv(r);
 }
 
 z3::expr isSmallPowerOfThree(const z3::expr& x, z3::context& c) {
     z3::expr r = c.bool_val(false);
     for (uint64 p = 1; p <= 2189; p *= 3)
 	r = r || (x == bvConst(p, c));
-    return boolToBv(r, c);
+    return boolToBv(r);
 }
 
-
-
 int main() {
-    const auto targetProgram = isSmallPowerOfThree;
-    const auto inputRestriction = [](const z3::expr& x) { return z3::ule(x, 2189); };
+    const auto targetProgram = isPowerOfTwoOrZero;
+    const auto inputRestriction = [](const z3::expr& x) { return x.ctx().bool_val(true); };
     //const auto targetProgram = isSmallPowerOfThree;
     //const auto inputRestriction = [](const z3::expr& x) { return z3::ule(x, 2189); };
 
@@ -207,7 +204,7 @@ int main() {
 		    solver.add(c);
 		for (const auto t : testCases) {
 		    const uint64 correctResult = targetProgram(bvConst(t, c), c).simplify().get_numeral_uint64();
-		    const auto programResult = eval(bvConst(t, c), insns, c);
+		    const auto programResult = eval(bvConst(t, c), insns);
 		    solver.add(programResult == bvConst(correctResult, c));
 		}
 		const auto result = solver.check();
@@ -221,7 +218,7 @@ int main() {
 		std::cerr << "Found program:\n";
 		const auto& model = solver.get_model();
 		const auto x = c.bv_const("x", REGISTER_WIDTH);
-		const auto solutionProgram = model.eval(eval(x, insns, c));
+		const auto solutionProgram = model.eval(eval(x, insns));
 		const auto program = reconstructProgram(insns, model);
 		for (std::size_t i = 0; i < program.size(); ++i)
 		    std::cerr << program[i].toString(i + 1) << std::endl;

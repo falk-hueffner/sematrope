@@ -23,7 +23,10 @@
 #include <z3++.h>
 
 constexpr int REGISTER_WIDTH = 32;
-using uint64 = __uint64; // needs to match z3's definition
+constexpr int SHIFT_MASK = REGISTER_WIDTH - 1;
+using uint64 = uint64_t; // needs to match z3's definition
+
+static_assert((REGISTER_WIDTH & (REGISTER_WIDTH - 1)) == 0, "REGISTER_WIDTH must be power of two");
 
 struct Op {
     std::string name;

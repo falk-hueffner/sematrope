@@ -44,10 +44,21 @@ z3::expr boolToBv(const z3::expr& b) {
 }
 
 std::vector<Op> ops = {
+    {"not",   [](const z3::expr& a, const z3::expr& b){ return ~a; }},
+    {"neg",   [](const z3::expr& a, const z3::expr& b){ return -a; }},
+    {"add",   [](const z3::expr& a, const z3::expr& b){ return a + b; }},
     {"sub",   [](const z3::expr& a, const z3::expr& b){ return a - b; }},
     {"mul",   [](const z3::expr& a, const z3::expr& b){ return a * b; }},
     {"and",   [](const z3::expr& a, const z3::expr& b){ return a & b; }},
+    {"or",    [](const z3::expr& a, const z3::expr& b){ return a | b; }},
+    {"xor",   [](const z3::expr& a, const z3::expr& b){ return a ^ b; }},
+    {"shl",   [](const z3::expr& a, const z3::expr& b){ return z3::shl(a, b & SHIFT_MASK); }},
+    {"shr",   [](const z3::expr& a, const z3::expr& b){ return z3::lshr(a, b & SHIFT_MASK); }},
+    {"ashr",  [](const z3::expr& a, const z3::expr& b){ return z3::ashr(a, b & SHIFT_MASK); }},
     {"cmpeq", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a == b); }},
+    {"cmpne", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a != b); }},
+    {"cmplt", [](const z3::expr& a, const z3::expr& b){ return boolToBv(z3::ult(a, b)); }},
+    {"cmpgt", [](const z3::expr& a, const z3::expr& b){ return boolToBv(z3::ugt(a, b)); }},
 };
 
 template<typename T>

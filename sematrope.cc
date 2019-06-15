@@ -43,8 +43,8 @@ z3::expr boolToBv(const z3::expr& b) {
 }
 
 std::vector<Op> ops = {
-    {"not",   [](const z3::expr& a, const z3::expr& b){ return ~a; }},
-    {"neg",   [](const z3::expr& a, const z3::expr& b){ return -a; }},
+    {"not",   [](const z3::expr& a, const z3::expr&){ return ~a; }},
+    {"neg",   [](const z3::expr& a, const z3::expr&){ return -a; }},
     {"add",   [](const z3::expr& a, const z3::expr& b){ return a + b; }},
     {"sub",   [](const z3::expr& a, const z3::expr& b){ return a - b; }},
     {"mul",   [](const z3::expr& a, const z3::expr& b){ return a * b; }},
@@ -213,8 +213,8 @@ int main() {
 			  << " instructions that is correct for all " << testCases.size() << " test cases...\n";
 		auto solver = z3::solver(c);
 		const auto [insns, constraints] = makeInsns(numInsns, c);
-		for (const auto& c : constraints)
-		    solver.add(c);
+		for (const auto& constraint : constraints)
+		    solver.add(constraint);
 		for (const auto t : testCases) {
 		    const uint64_t correctResult = targetProgram(bvConst(t, c), c).simplify().get_numeral_uint64();
 		    const auto programResult = eval(bvConst(t, c), insns);
@@ -261,6 +261,4 @@ int main() {
 	std::cerr << e.msg() << std::endl;
 	return 1;
     }
-
-    return 0;
 }

@@ -24,7 +24,6 @@
 
 constexpr int REGISTER_WIDTH = 32;
 constexpr int SHIFT_MASK = REGISTER_WIDTH - 1;
-using uint64 = uint64_t; // needs to match z3's definition
 
 static_assert((REGISTER_WIDTH & (REGISTER_WIDTH - 1)) == 0, "REGISTER_WIDTH must be power of two");
 
@@ -35,7 +34,7 @@ struct Op {
 
 using Opcode = int;
 
-z3::expr bvConst(uint64 x, z3::context& c) {
+z3::expr bvConst(uint64_t x, z3::context& c) {
     return c.bv_val(x, REGISTER_WIDTH);
 }
 
@@ -72,7 +71,7 @@ struct Insn {
     Opcode opcode;
     int r1, r2;
     bool isImm;
-    uint64 imm;
+    uint64_t imm;
 
     std::string toString(int dest) const {
 	std::string s = ops[opcode].name;
@@ -142,7 +141,7 @@ makeInsns(int numInsns, z3::context& c) {
 int getIntDefault(z3::expr e, int d = 0) {
     return e.is_numeral() ? e.get_numeral_int() : d;
 }
-uint64 getUint64Default(z3::expr e, uint64 d = 0) {
+uint64_t getUint64Default(z3::expr e, uint64_t d = 0) {
     return e.is_numeral() ? e.get_numeral_uint64() : d;
 }
 
@@ -173,7 +172,7 @@ std::vector<Insn> reconstructProgram(const std::vector<SymbolicInsn>& insns, con
 
 z3::expr isPowerOfTwoOrZero(const z3::expr& x, z3::context& c) {
     auto r = x == 0;
-    uint64 p = 1;
+    uint64_t p = 1;
     for (int i = 0; i < REGISTER_WIDTH; ++i) {
 	r = r || (x == bvConst(p, c));
 	p <<= 1;
@@ -183,7 +182,7 @@ z3::expr isPowerOfTwoOrZero(const z3::expr& x, z3::context& c) {
 
 z3::expr isPowerOfTwo(const z3::expr& x, z3::context& c) {
     z3::expr r = c.bool_val(false);
-    uint64 p = 1;
+    uint64_t p = 1;
     for (int i = 0; i < REGISTER_WIDTH; ++i) {
 	r = r || (x == bvConst(p, c));
 	p <<= 1;
@@ -193,7 +192,7 @@ z3::expr isPowerOfTwo(const z3::expr& x, z3::context& c) {
 
 z3::expr isSmallPowerOfThree(const z3::expr& x, z3::context& c) {
     z3::expr r = c.bool_val(false);
-    for (uint64 p = 1; p <= 2189; p *= 3)
+    for (uint64_t p = 1; p <= 2189; p *= 3)
 	r = r || (x == bvConst(p, c));
     return boolToBv(r);
 }
@@ -205,7 +204,7 @@ int main() {
     //const auto inputRestriction = [](const z3::expr& x) { return z3::ule(x, 2189); };
 
     try {
-	std::vector<uint64> testCases;
+	std::vector<uint64_t> testCases;
 	for (int numInsns = 1; ; ++numInsns) {
 	    std::cerr << "\n=== Trying with " << numInsns << " instructions ===\n\n";
 	    while (true) {
@@ -217,7 +216,7 @@ int main() {
 		for (const auto& c : constraints)
 		    solver.add(c);
 		for (const auto t : testCases) {
-		    const uint64 correctResult = targetProgram(bvConst(t, c), c).simplify().get_numeral_uint64();
+		    const uint64_t correctResult = targetProgram(bvConst(t, c), c).simplify().get_numeral_uint64();
 		    const auto programResult = eval(bvConst(t, c), insns);
 		    solver.add(programResult == bvConst(correctResult, c));
 		}

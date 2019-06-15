@@ -14,6 +14,10 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>. */
 
+#include "targets/isPowerOfTwo.hh"
+
+#include "sematrope.hh"
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -22,10 +26,27 @@
 
 #include <z3++.h>
 
-constexpr int REGISTER_WIDTH = 32;
-constexpr int SHIFT_MASK = REGISTER_WIDTH - 1;
+std::vector<Target>& getTargets() {
+    static std::vector<Target> targets;
+    return targets;
+}
 
-static_assert((REGISTER_WIDTH & (REGISTER_WIDTH - 1)) == 0, "REGISTER_WIDTH must be power of two");
+void registerTarget(const Target& target) {
+    getTargets().push_back(target);
+}
+
+z3::context context;
+int registerWidth;
+int shiftMask;
+
+// Return a constant with the same context and width as variable x.
+z3::expr bvConst(uint64_t x) {
+    return context.bv_val(x, registerWidth);
+}
+
+z3::expr boolToBv(const z3::expr& b) {
+    return z3::ite(b, bvConst(1), bvConst(0));
+}
 
 struct Op {
     std::string name;
@@ -34,30 +55,29 @@ struct Op {
 
 using Opcode = int;
 
-z3::expr bvConst(uint64_t x, z3::context& c) {
-    return c.bv_val(x, REGISTER_WIDTH);
-}
-
-z3::expr boolToBv(const z3::expr& b) {
-    return z3::ite(b, bvConst(1, b.ctx()), bvConst(0, b.ctx()));
-}
-
 std::vector<Op> ops = {
     {"not",   [](const z3::expr& a, const z3::expr&){ return ~a; }},
     {"neg",   [](const z3::expr& a, const z3::expr&){ return -a; }},
     {"add",   [](const z3::expr& a, const z3::expr& b){ return a + b; }},
     {"sub",   [](const z3::expr& a, const z3::expr& b){ return a - b; }},
     {"mul",   [](const z3::expr& a, const z3::expr& b){ return a * b; }},
+    {"div",   [](const z3::expr& a, const z3::expr& b){ return a * b; }},
     {"and",   [](const z3::expr& a, const z3::expr& b){ return a & b; }},
     {"or",    [](const z3::expr& a, const z3::expr& b){ return a | b; }},
     {"xor",   [](const z3::expr& a, const z3::expr& b){ return a ^ b; }},
-    {"shl",   [](const z3::expr& a, const z3::expr& b){ return z3::shl(a, b & SHIFT_MASK); }},
-    {"shr",   [](const z3::expr& a, const z3::expr& b){ return z3::lshr(a, b & SHIFT_MASK); }},
-    {"ashr",  [](const z3::expr& a, const z3::expr& b){ return z3::ashr(a, b & SHIFT_MASK); }},
+    {"shl",   [](const z3::expr& a, const z3::expr& b){ return z3::shl(a, b & shiftMask); }},
+    {"shr",   [](const z3::expr& a, const z3::expr& b){ return z3::lshr(a, b & shiftMask); }},
+    {"ashr",  [](const z3::expr& a, const z3::expr& b){ return z3::ashr(a, b & shiftMask); }},
     {"cmpeq", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a == b); }},
     {"cmpne", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a != b); }},
-    {"cmplt", [](const z3::expr& a, const z3::expr& b){ return boolToBv(z3::ult(a, b)); }},
-    {"cmpgt", [](const z3::expr& a, const z3::expr& b){ return boolToBv(z3::ugt(a, b)); }},
+    {"cmplt", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a < b); }},
+    {"cmpgt", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a > b); }},
+    {"cmple", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a <= b); }},
+    {"cmpge", [](const z3::expr& a, const z3::expr& b){ return boolToBv(a >= b); }},
+    {"cmpult", [](const z3::expr& a, const z3::expr& b){ return boolToBv(z3::ult(a, b)); }},
+    {"cmpugt", [](const z3::expr& a, const z3::expr& b){ return boolToBv(z3::ugt(a, b)); }},
+    {"cmpule", [](const z3::expr& a, const z3::expr& b){ return boolToBv(z3::ule(a, b)); }},
+    {"cmpuge", [](const z3::expr& a, const z3::expr& b){ return boolToBv(z3::uge(a, b)); }},
 };
 
 template<typename T>
@@ -91,7 +111,7 @@ struct SymbolicInsn {
 	: opcode(c.int_const((prefix + "_op").c_str())),
 	  r1(c.int_const((prefix + "_r1").c_str())),
 	  r2(c.int_const((prefix + "_r2").c_str())),
-	  imm(c.bv_const((prefix + "_imm").c_str(), REGISTER_WIDTH)) {}
+	  imm(c.bv_const((prefix + "_imm").c_str(), registerWidth)) {}
     z3::expr opcode;
     // r1 is the number of a register; r2 is the number of a register
     // or implies use of the immediate if the number is out of the
@@ -133,7 +153,7 @@ makeInsns(int numInsns, z3::context& c) {
     std::vector<z3::expr> constraints;
     for (int i = 0; i < numInsns; ++i) {
 	insns.push_back(SymbolicInsn(c, std::string("op") + std::to_string(i)));
-	constraints.push_back(z3::ult(insns.back().imm, bvConst(0xff, c)));
+	constraints.push_back(z3::ult(insns.back().imm, bvConst(0xff)));
     }
     return {insns, constraints};
 }
@@ -168,57 +188,36 @@ std::vector<Insn> reconstructProgram(const std::vector<SymbolicInsn>& insns, con
     return result;
 }
 
-// === test cases
-
-z3::expr isPowerOfTwoOrZero(const z3::expr& x, z3::context& c) {
-    auto r = x == 0;
-    uint64_t p = 1;
-    for (int i = 0; i < REGISTER_WIDTH; ++i) {
-	r = r || (x == bvConst(p, c));
-	p <<= 1;
-    }
-    return boolToBv(r);
-}
-
-z3::expr isPowerOfTwo(const z3::expr& x, z3::context& c) {
-    z3::expr r = c.bool_val(false);
-    uint64_t p = 1;
-    for (int i = 0; i < REGISTER_WIDTH; ++i) {
-	r = r || (x == bvConst(p, c));
-	p <<= 1;
-    }
-    return boolToBv(r);
-}
-
-z3::expr isSmallPowerOfThree(const z3::expr& x, z3::context& c) {
-    z3::expr r = c.bool_val(false);
-    for (uint64_t p = 1; p <= 2189; p *= 3)
-	r = r || (x == bvConst(p, c));
-    return boolToBv(r);
-}
-
 int main() {
-    const auto targetProgram = isPowerOfTwoOrZero;
-    const auto inputRestriction = [](const z3::expr& x) { return x.ctx().bool_val(true); };
-    //const auto targetProgram = isSmallPowerOfThree;
-    //const auto inputRestriction = [](const z3::expr& x) { return z3::ule(x, 2189); };
+    const auto targetName = "isPowerOfTwoNonzero";
+    Target target;
+    for (const auto& t : getTargets()) {
+	if (t.name == targetName) {
+	    target = t;
+	    break;
+	}
+    }
+    assert(!target.name.empty());
+    registerWidth = target.registerWidth;
+    assert((registerWidth & (registerWidth - 1)) == 0);
+    shiftMask = registerWidth - 1;
 
+    std::cerr << "=== Finding optimal program for " << target.name << " ===\n";
     try {
 	std::vector<uint64_t> testCases;
 	for (int numInsns = 1; ; ++numInsns) {
 	    std::cerr << "\n=== Trying with " << numInsns << " instructions ===\n\n";
 	    while (true) {
-		z3::context c;
 		std::cerr << "Finding program with " << numInsns
 			  << " instructions that is correct for all " << testCases.size() << " test cases...\n";
-		auto solver = z3::solver(c);
-		const auto [insns, constraints] = makeInsns(numInsns, c);
+		auto solver = z3::solver(context);
+		const auto [insns, constraints] = makeInsns(numInsns, context);
 		for (const auto& constraint : constraints)
 		    solver.add(constraint);
 		for (const auto t : testCases) {
-		    const uint64_t correctResult = targetProgram(bvConst(t, c), c).simplify().get_numeral_uint64();
-		    const auto programResult = eval(bvConst(t, c), insns);
-		    solver.add(programResult == bvConst(correctResult, c));
+		    const uint64_t correctResult = target.target(bvConst(t)).simplify().get_numeral_uint64();
+		    const auto programResult = eval(bvConst(t), insns);
+		    solver.add(programResult == bvConst(correctResult));
 		}
 		const auto result = solver.check();
 		if (result != z3::sat) {
@@ -230,15 +229,15 @@ int main() {
 
 		std::cerr << "Found program:\n";
 		const auto& model = solver.get_model();
-		const auto x = c.bv_const("x", REGISTER_WIDTH);
+		const auto x = context.bv_const("x", registerWidth);
 		const auto solutionProgram = model.eval(eval(x, insns));
 		const auto program = reconstructProgram(insns, model);
 		for (std::size_t i = 0; i < program.size(); ++i)
 		    std::cerr << program[i].toString(i + 1) << std::endl;
 
 		std::cerr << "\nFinding counterexample...\n";
-		auto cesolver = z3::solver(c);
-		cesolver.add(inputRestriction(x) && solutionProgram != targetProgram(x, c));
+		auto cesolver = z3::solver(context);
+		cesolver.add(target.isValidInput(x) && solutionProgram != target.target(x));
 		const auto ceResult = cesolver.check();
 		if (ceResult != z3::sat) {
 		    if (ceResult != z3::unsat)
@@ -252,7 +251,7 @@ int main() {
 		auto t = cemodel.eval(x).get_numeral_uint64();
 		std::cerr << "Found counterexample: " << t
 			  << " evals to " << cemodel.eval(solutionProgram).get_numeral_uint64()
-			  << " but should be " << targetProgram(bvConst(t, c), c).simplify().get_numeral_uint64()
+			  << " but should be " << target.target(bvConst(t)).simplify().get_numeral_uint64()
 			  << std::endl;
 		testCases.push_back(t);
 	    }

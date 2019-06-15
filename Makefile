@@ -1,6 +1,6 @@
 CXX	 = g++
 CXXFLAGS = -std=c++17 -g -Ofast -march=native -W -Wall
-INCLUDES = -I/usr/include/z3
+INCLUDES = -I/usr/include/z3 -I.
 LIBS     = -lz3
 PROG	 = sematrope
 

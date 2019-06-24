@@ -25,8 +25,9 @@
 struct Target {
     std::string name;
     int registerWidth = 0;
-    std::function<z3::expr(const z3::expr&)> target;
-    std::function<z3::expr(const z3::expr&)> isValidInput;
+    int arity = 1;
+    std::function<z3::expr(const std::vector<z3::expr>&)> target;
+    std::function<z3::expr(const std::vector<z3::expr>&)> isValidInput;
 };
 
 extern z3::context context;

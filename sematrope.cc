@@ -125,23 +125,24 @@ struct SymbolicInsn {
 
 // Returns an expression representing the result of running the
 // program in insns on the input value x.
-z3::expr eval(const z3::expr& x, const std::vector<SymbolicInsn>& insns) {
+z3::expr eval(const std::vector<z3::expr>& input, const std::vector<SymbolicInsn>& insns) {
     std::vector<z3::expr> regs;
-    regs.push_back(x);
+    for (const auto& x : input)
+	regs.push_back(x);
     for (std::size_t i = 0; i < insns.size(); ++i) {
-	z3::expr in1 = regs[i];
-	for (int j = int(i) - 1; j >= 0; --j)
+       z3::expr in1 = regs[0];
+       for (int j = 1; j < static_cast<int>(regs.size()); ++j)
 	    in1 = z3::ite(insns[i].r1 == j, regs[j], in1);
-	z3::expr in2 = insns[i].imm;
-	for (int j = int(i); j >= 0; --j)
-	    in2 = z3::ite(insns[i].r2 == j, regs[j], in2);
+       z3::expr in2 = insns[i].imm;
+       for (int j = 0; j < static_cast<int>(regs.size()); ++j)
+	   in2 = z3::ite(insns[i].r2 == j, regs[j], in2);
 
 	z3::expr result = ops[0].eval(in1, in2);
 	for (int opcode = 1; opcode < static_cast<int>(ops.size()); ++opcode)
 	    result = z3::ite(insns[i].opcode == opcode, ops[opcode].eval(in1, in2), result);
 	regs.push_back(result);
     }
-    return regs[insns.size()];
+    return regs.back();
 }
 
 std::pair<
@@ -165,16 +166,19 @@ uint64_t getUint64Default(z3::expr e, uint64_t d = 0) {
     return e.is_numeral() ? e.get_numeral_uint64() : d;
 }
 
-std::vector<Insn> reconstructProgram(const std::vector<SymbolicInsn>& insns, const z3::model& model) {
+std::vector<Insn> reconstructProgram(const std::vector<SymbolicInsn>& insns,
+				     const z3::model& model,
+				     const int numInputRegisters) {
     std::vector<Insn> result;
     for (int i = 0; i < static_cast<int>(insns.size()); ++i) {
 	Insn insn;
 	int opcode = getIntDefault(model.eval(insns[i].opcode), 0);
 	insn.opcode = (opcode < 0 || opcode >= static_cast<int>(ops.size())) ? 0 : opcode;
 	int r1 = getIntDefault(model.eval(insns[i].r1), 0);
-	insn.r1 = (r1 < 0 || r1 > i) ? i : r1;
+	insn.r1 = (r1 < 0 || r1 >= numInputRegisters + i) ? i : r1;
 	int r2 = getIntDefault(model.eval(insns[i].r2), 0);
-	if (r2 < 0 || r2 > i) {
+	const bool outOfRange = r2 < 0 || r2 >= numInputRegisters + i;
+	if (outOfRange) {
 	    insn.isImm = true;
 	    insn.r2 = 0;
 	    insn.imm = getUint64Default(model.eval(insns[i].imm), 0);
@@ -204,7 +208,7 @@ int main() {
 
     std::cerr << "=== Finding optimal program for " << target.name << " ===\n";
     try {
-	std::vector<uint64_t> testCases;
+	std::vector<std::vector<uint64_t>> testCases;
 	for (int numInsns = 1; ; ++numInsns) {
 	    std::cerr << "\n=== Trying with " << numInsns << " instructions ===\n\n";
 	    while (true) {
@@ -215,8 +219,11 @@ int main() {
 		for (const auto& constraint : constraints)
 		    solver.add(constraint);
 		for (const auto t : testCases) {
-		    const uint64_t correctResult = target.target(bvConst(t)).simplify().get_numeral_uint64();
-		    const auto programResult = eval(bvConst(t), insns);
+		    std::vector<z3::expr> inputs;
+		    for (auto x : t)
+			inputs.push_back(bvConst(x));
+		    const uint64_t correctResult = target.target(inputs).simplify().get_numeral_uint64();
+		    const auto programResult = eval(inputs, insns);
 		    solver.add(programResult == bvConst(correctResult));
 		}
 		const auto result = solver.check();
@@ -229,29 +236,41 @@ int main() {
 
 		std::cerr << "Found program:\n";
 		const auto& model = solver.get_model();
-		const auto x = context.bv_const("x", registerWidth);
-		const auto solutionProgram = model.eval(eval(x, insns));
-		const auto program = reconstructProgram(insns, model);
+		std::vector<z3::expr> inputs;
+		for (int i = 0; i < target.arity; ++i)
+		    inputs.push_back(context.bv_const(("x" + std::to_string(i)).c_str(), target.registerWidth));
+		const auto solutionProgram = model.eval(eval(inputs, insns));
+		const auto program = reconstructProgram(insns, model, target.arity);
 		for (std::size_t i = 0; i < program.size(); ++i)
-		    std::cerr << program[i].toString(i + 1) << std::endl;
+		    std::cerr << program[i].toString(i + target.arity) << std::endl;
 
 		std::cerr << "\nFinding counterexample...\n";
 		auto cesolver = z3::solver(context);
-		cesolver.add(target.isValidInput(x) && solutionProgram != target.target(x));
+		cesolver.add(target.isValidInput(inputs) && solutionProgram != target.target(inputs));
 		const auto ceResult = cesolver.check();
 		if (ceResult != z3::sat) {
 		    if (ceResult != z3::unsat)
 			throw z3::exception("unexpected check value");
 		    std::cerr << "No counterexample found. Correct program is:\n";
 		    for (std::size_t i = 0; i < program.size(); ++i)
-			std::cout << program[i].toString(i + 1) << std::endl;
+			std::cout << program[i].toString(i + target.arity) << std::endl;
 		    return 0;
 		}
 		const auto& cemodel = cesolver.get_model();
-		auto t = cemodel.eval(x).get_numeral_uint64();
-		std::cerr << "Found counterexample: " << t
-			  << " evals to " << cemodel.eval(solutionProgram).get_numeral_uint64()
-			  << " but should be " << target.target(bvConst(t)).simplify().get_numeral_uint64()
+		std::vector<uint64_t> t;
+		for (int i = 0; i < static_cast<int>(inputs.size()); ++i) {
+		    const auto& v = cemodel.eval(inputs[i]);
+		    t.push_back(v.is_numeral() ? v.get_numeral_uint64() : 0);
+		}
+		std::vector<z3::expr> z3t;
+		for (auto x : t)
+		    z3t.push_back(bvConst(x));
+
+		std::cerr << "Found counterexample: [ ";
+		for (auto x : t)
+		    std::cerr << x << ' ';
+		std::cerr << "] evals to " << cemodel.eval(solutionProgram).get_numeral_uint64()
+			  << " but should be " << target.target(z3t).simplify().get_numeral_uint64()
 			  << std::endl;
 		testCases.push_back(t);
 	    }

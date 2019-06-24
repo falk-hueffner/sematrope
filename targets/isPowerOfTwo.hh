@@ -26,7 +26,10 @@ __attribute__((constructor)) void registerIsPowerOfTwoNonzero() {
     Target target = {
 	.name = "isPowerOfTwoNonzero",
 	.registerWidth = REGISTER_WIDTH,
-	.target = [](const z3::expr& x) {
+	.arity = 1,
+	.target = [](const std::vector<z3::expr>& xs) {
+	    assert(xs.size() == 1);
+	    const auto& x = xs[0];
 	    auto r = context.bool_val(false);
 	    uint64_t p = 1;
 	    for (int i = 0; i < REGISTER_WIDTH; ++i) {
@@ -35,7 +38,11 @@ __attribute__((constructor)) void registerIsPowerOfTwoNonzero() {
 	    }
 	    return boolToBv(r);
 	},
-	.isValidInput = [](const z3::expr& x) { return x != 0; },
+	.isValidInput = [](const std::vector<z3::expr>& xs) {
+	    assert(xs.size() == 1);
+	    const auto& x = xs[0];
+	    return x != 0;
+	},
     };
 
     registerTarget(target);

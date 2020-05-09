@@ -175,7 +175,7 @@ std::vector<Insn> reconstructProgram(const std::vector<SymbolicInsn>& insns,
 	int opcode = getIntDefault(model.eval(insns[i].opcode), 0);
 	insn.opcode = (opcode < 0 || opcode >= static_cast<int>(ops.size())) ? 0 : opcode;
 	int r1 = getIntDefault(model.eval(insns[i].r1), 0);
-	insn.r1 = (r1 < 0 || r1 >= numInputRegisters + i) ? i : r1;
+	insn.r1 = (r1 < 0 || r1 >= numInputRegisters + i) ? 0 : r1;
 	int r2 = getIntDefault(model.eval(insns[i].r2), 0);
 	const bool outOfRange = r2 < 0 || r2 >= numInputRegisters + i;
 	if (outOfRange) {

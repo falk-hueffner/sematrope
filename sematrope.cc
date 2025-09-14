@@ -61,7 +61,7 @@ std::vector<Op> ops = {
     {"add",   [](const z3::expr& a, const z3::expr& b){ return a + b; }},
     {"sub",   [](const z3::expr& a, const z3::expr& b){ return a - b; }},
     {"mul",   [](const z3::expr& a, const z3::expr& b){ return a * b; }},
-    {"div",   [](const z3::expr& a, const z3::expr& b){ return a * b; }},
+    {"div",   [](const z3::expr& a, const z3::expr& b){ return a / b; }},
     {"and",   [](const z3::expr& a, const z3::expr& b){ return a & b; }},
     {"or",    [](const z3::expr& a, const z3::expr& b){ return a | b; }},
     {"xor",   [](const z3::expr& a, const z3::expr& b){ return a ^ b; }},

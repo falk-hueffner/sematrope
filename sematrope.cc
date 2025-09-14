@@ -218,7 +218,7 @@ int main() {
 		const auto [insns, constraints] = makeInsns(numInsns, context);
 		for (const auto& constraint : constraints)
 		    solver.add(constraint);
-		for (const auto t : testCases) {
+		for (const auto& t : testCases) {
 		    std::vector<z3::expr> inputs;
 		    for (auto x : t)
 			inputs.push_back(bvConst(x));
